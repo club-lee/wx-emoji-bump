@@ -12,13 +12,14 @@
     CLICK_IMPULSE_RANGE: 90,
     CLICK_SCALE: 1.25,
     CLICK_SCALE_MS: 200,
-    CHAIN_WINDOW: 1000,
-    EMOTION_MAX: 100,
-    EMOTION_MERGE: 5,
-    EMOTION_CHAIN: 10,
+    CHAIN_WINDOW: 800,
+    EMOTION_MAX: 150,
+    EMOTION_MERGE: 3,
+    EMOTION_CHAIN: 5,
     SPAWN_INIT_DELAY: 2800,
     SPAWN_MIN_DELAY: 1400,
     SPAWN_SPEED_FACTOR: 40,
+    AUTO_LAUNCH_IDLE: 3000,
     MERGE_VEL_MIN: 0.8,
     GRAVITY: 0,
     BOUNCE_EMOJI: 0.9,
@@ -74,6 +75,8 @@
     selectedCustomLevel: 1,
     spawnTimer: 0,
     spawnDelay: CFG.SPAWN_INIT_DELAY,
+    nextSpawnLevel: 1,
+    input: { isDown: false, startX: 0, startY: 0, currX: 0, currY: 0, isAiming: false },
     maxLevel: 1,
     mergeCount: 0,
     burstCount: 0,
@@ -241,14 +244,25 @@
     return Math.max(3, base + rand);
   }
 
-  function launchEmoji(level) {
-    const cx = W / 2 + (Math.random() - 0.5) * CFG.LAUNCH_JITTER_X * 2;
-    const cy = H - CFG.WALL_PAD - LEVELS[level - 1].r - 5;
-    const angle = -Math.PI / 2 + (Math.random() - 0.5) * CFG.LAUNCH_ANGLE_SPREAD * 2;
+  function launchEmoji(level, angle, useJitter = true) {
+    const cx = W / 2 + (useJitter ? (Math.random() - 0.5) * CFG.LAUNCH_JITTER_X * 2 : 0);
+    const r = LEVELS[level - 1].r;
+    const cy = H - CFG.WALL_PAD - r - 5;
+    if (angle === undefined) {
+      angle = -Math.PI / 2 + (Math.random() - 0.5) * CFG.LAUNCH_ANGLE_SPREAD * 2;
+    }
     const speed = getLaunchSpeed(level);
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
     return createEmoji(cx, cy, level, vx, vy);
+  }
+
+  function doLaunch(angle) {
+    launchEmoji(S.nextSpawnLevel, angle, false);
+    S.spawnTimer = performance.now();
+    S.spawnDelay = Math.max(CFG.SPAWN_MIN_DELAY,
+      CFG.SPAWN_INIT_DELAY - Math.floor(S.score / 100) * CFG.SPAWN_SPEED_FACTOR);
+    S.nextSpawnLevel = getSpawnLevel();
   }
 
   function removeEmoji(bodyId) {
@@ -501,15 +515,12 @@
   }
 
   // ======================== SPAWNING ========================
-  function trySpawn(now) {
+  function checkAutoLaunch(now) {
     if (S.emojiData.size >= CFG.MAX_EMOJIS + 3) return;
-    if (now - S.spawnTimer < S.spawnDelay) return;
-    S.spawnTimer = now;
-    S.spawnDelay = Math.max(CFG.SPAWN_MIN_DELAY,
-      CFG.SPAWN_INIT_DELAY - Math.floor(S.score / 100) * CFG.SPAWN_SPEED_FACTOR);
-
-    const lv = getSpawnLevel();
-    launchEmoji(lv);
+    if (now - S.spawnTimer > S.spawnDelay + CFG.AUTO_LAUNCH_IDLE) {
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * CFG.LAUNCH_ANGLE_SPREAD * 2;
+      doLaunch(angle);
+    }
   }
 
   function getSpawnLevel() {
@@ -623,6 +634,7 @@
     ctx.translate(shake.x, shake.y);
 
     drawContainer();
+    drawAiming(now);
     drawEmojis(now);
     drawRipples();
     drawParticles();
@@ -648,6 +660,82 @@
     glowGrd.addColorStop(1, 'rgba(255, 137, 6, 0)');
     ctx.fillStyle = glowGrd;
     ctx.fillRect(W / 2 - 60, H - p - 60, 120, 60);
+  }
+
+  function drawAiming(now) {
+    if (S.paused || S.gameOver) return;
+
+    const cx = W / 2;
+    const r = LEVELS[S.nextSpawnLevel - 1].r;
+    const cy = H - CFG.WALL_PAD - r - 5;
+
+    const timeSinceLastLaunch = now - S.spawnTimer;
+    const cooldownProgress = Math.min(1, timeSinceLastLaunch / S.spawnDelay);
+    const isReady = cooldownProgress >= 1;
+
+    // Draw trajectory line whenever aiming, regardless of cooldown
+    if (S.input.isAiming) {
+      const dx = S.input.currX - cx;
+      const dy = S.input.currY - cy;
+      let angle = Math.atan2(dy, dx);
+      if (angle > -0.1 && angle < Math.PI / 2) angle = -0.1;
+      if (angle >= Math.PI / 2 || angle < -Math.PI + 0.1) angle = -Math.PI + 0.1;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(angle) * 150, cy + Math.sin(angle) * 150);
+
+      const grad = ctx.createLinearGradient(cx, cy, cx + Math.cos(angle) * 150, cy + Math.sin(angle) * 150);
+      grad.addColorStop(0, `rgba(255, 255, 255, ${isReady ? 0.9 : 0.4})`);
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = isReady ? 4 : 2;
+      ctx.lineCap = 'round';
+      ctx.setLineDash([8, 12]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineCap = 'butt';
+    }
+
+    // Draw the preview emoji — quick pop-in only during cooldown
+    const info = LEVELS[S.nextSpawnLevel - 1];
+    const POPIN_MS = 150;
+    const popProgress = Math.min(1, timeSinceLastLaunch / POPIN_MS);
+    const scale = 0.6 + 0.4 * popProgress;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = 0.4 + 0.6 * popProgress;
+
+    const tex = customTextures[S.nextSpawnLevel] || emojiTextures[S.nextSpawnLevel];
+    if (tex) {
+      const drawSize = r * 2 + 8;
+      ctx.drawImage(tex, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+    } else {
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fillStyle = info.color;
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Auto-launch countdown circle — only after ready
+    if (isReady && S.emojiData.size < CFG.MAX_EMOJIS + 3) {
+      const idleTime = timeSinceLastLaunch - S.spawnDelay;
+      const autoProgress = Math.min(1, Math.max(0, idleTime / CFG.AUTO_LAUNCH_IDLE));
+
+      if (autoProgress > 0) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * autoProgress);
+        ctx.strokeStyle = autoProgress > 0.75 ? '#ef4444' : '#63E6BE';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+    }
   }
 
   function drawEmojis(now) {
@@ -1032,6 +1120,8 @@
     S.gameOver = false;
     S.paused = false;
     S.spawnDelay = CFG.SPAWN_INIT_DELAY;
+    S.nextSpawnLevel = 1;
+    S.input = { isDown: false, startX: 0, startY: 0, currX: 0, currY: 0, isAiming: false };
     S.maxLevel = 1;
     S.mergeCount = 0;
     S.burstCount = 0;
@@ -1107,7 +1197,7 @@
 
     nudgeSlowEmojis();
     processMerges();
-    trySpawn(timestamp);
+    checkAutoLaunch(timestamp);
     checkCrash(timestamp);
     updateParticles(dt);
     updateRipples(dt);
@@ -1173,16 +1263,105 @@
     });
 
     const canvas = dom.canvas;
+
+    function handlePointerDown(x, y) {
+      if (S.gameOver || S.paused) return;
+      S.input.isDown = true;
+      S.input.startX = x;
+      S.input.startY = y;
+      S.input.currX = x;
+      S.input.currY = y;
+      S.input.isAiming = true;
+    }
+
+    function handlePointerMove(x, y) {
+      if (!S.input.isDown) return;
+      S.input.currX = x;
+      S.input.currY = y;
+    }
+
+    function handlePointerUp(x, y) {
+      if (!S.input.isDown) return;
+      S.input.isDown = false;
+      S.input.isAiming = false;
+
+      const dx = x - S.input.startX;
+      const dy = y - S.input.startY;
+      const isDrag = (dx * dx + dy * dy > 25);
+
+      let clickedEmoji = false;
+      if (!isDrag) {
+        for (const [id, data] of S.emojiData) {
+          const b = data.body;
+          const edx = b.position.x - S.input.startX;
+          const edy = b.position.y - S.input.startY;
+          const r = LEVELS[data.level - 1].r;
+          if (edx * edx + edy * edy < r * r * 1.2) {
+            clickedEmoji = true;
+            break;
+          }
+        }
+      }
+
+      if (!isDrag && clickedEmoji) {
+        handleClick(x, y);
+      } else {
+        if (S.emojiData.size >= CFG.MAX_EMOJIS + 3) return;
+        
+        const cx = W / 2;
+        const cy = H - CFG.WALL_PAD - LEVELS[S.nextSpawnLevel - 1].r - 5;
+        let aimDx = x - cx;
+        let aimDy = y - cy;
+        let angle = Math.atan2(aimDy, aimDx);
+        
+        if (angle > -0.1 && angle < Math.PI / 2) angle = -0.1;
+        if (angle >= Math.PI / 2 || angle < -Math.PI + 0.1) angle = -Math.PI + 0.1;
+
+        doLaunch(angle);
+      }
+    }
+
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault();
       const t = e.touches[0];
       const rect = canvas.getBoundingClientRect();
-      handleClick(t.clientX - rect.left, t.clientY - rect.top);
+      handlePointerDown(t.clientX - rect.left, t.clientY - rect.top);
     }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      handlePointerMove(t.clientX - rect.left, t.clientY - rect.top);
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      const t = e.changedTouches[0] || { clientX: S.input.currX, clientY: S.input.currY };
+      const rect = canvas.getBoundingClientRect();
+      let x = t.clientX;
+      let y = t.clientY;
+      if (t.clientX === undefined) { // fallback
+        x = S.input.currX + rect.left;
+        y = S.input.currY + rect.top;
+      }
+      handlePointerUp(x - rect.left, y - rect.top);
+    });
 
     canvas.addEventListener('mousedown', (e) => {
       const rect = canvas.getBoundingClientRect();
-      handleClick(e.clientX - rect.left, e.clientY - rect.top);
+      handlePointerDown(e.clientX - rect.left, e.clientY - rect.top);
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      handlePointerMove(e.clientX - rect.left, e.clientY - rect.top);
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (!S.input.isDown) return;
+      const rect = canvas.getBoundingClientRect();
+      handlePointerUp(e.clientX - rect.left, e.clientY - rect.top);
     });
 
     window.addEventListener('resize', () => {
