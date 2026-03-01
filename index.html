@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>表情乱碰</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 开始画面 -->
+    <div id="screen-start" class="screen active">
+      <div class="start-content">
+        <div class="start-emoji-bg">😀😎🤣😍🤪😱🤩👻👑</div>
+        <h1 class="game-title">表情乱碰</h1>
+        <p class="game-subtitle">点击 · 碰撞 · 合成 · 封神</p>
+        <button class="btn btn-primary btn-large" id="btn-start">开始游戏</button>
+        <button class="btn btn-secondary" id="btn-custom-start">🎨 自定义表情</button>
+      </div>
+    </div>
+
+    <!-- 游戏画面 -->
+    <div id="screen-game" class="screen">
+      <div id="hud-top">
+        <div class="hud-left">
+          <div class="hud-score">
+            <span class="hud-label">得分</span>
+            <span class="hud-value" id="score-value">0</span>
+          </div>
+        </div>
+        <div class="hud-center">
+          <div class="hud-emotion">
+            <div id="emotion-bar">
+              <div id="emotion-fill"></div>
+            </div>
+            <span id="emotion-text">0</span>
+          </div>
+        </div>
+        <div class="hud-right">
+          <div id="emoji-count-display">
+            <span class="hud-label">数量</span>
+            <span class="hud-value" id="emoji-count">0</span>
+            <span class="hud-max">/25</span>
+          </div>
+        </div>
+      </div>
+
+      <canvas id="game-canvas"></canvas>
+
+      <div id="combo-popup" class="hidden"></div>
+      <div id="level-popup" class="hidden"></div>
+
+      <div id="warning-overlay" class="hidden">
+        <div class="warning-inner">
+          <span class="warning-icon">⚠️</span>
+          <span class="warning-text">即将崩盘!</span>
+          <span class="warning-timer" id="warning-timer">5</span>
+        </div>
+      </div>
+
+      <div id="hud-bottom">
+        <button class="btn-game btn-burst" id="btn-burst" disabled>
+          <span class="btn-icon">💥</span>
+          <span class="btn-text">爆发</span>
+        </button>
+        <button class="btn-game btn-tool" id="btn-custom-game">
+          <span class="btn-icon">🎨</span>
+          <span class="btn-text">表情</span>
+        </button>
+        <button class="btn-game btn-tool" id="btn-share">
+          <span class="btn-icon">📤</span>
+          <span class="btn-text">分享</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 游戏结束画面 -->
+    <div id="screen-gameover" class="screen">
+      <div class="gameover-content">
+        <h2 class="gameover-title">游戏结束</h2>
+        <div class="final-stats">
+          <div class="stat-row stat-score">
+            <span class="stat-label">最终得分</span>
+            <span class="stat-value" id="final-score">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">最高等级</span>
+            <span class="stat-value" id="final-level">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">合成次数</span>
+            <span class="stat-value" id="final-merges">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">存活时间</span>
+            <span class="stat-value" id="final-time">0s</span>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-large" id="btn-restart">再来一局</button>
+        <button class="btn btn-secondary" id="btn-share-result">📤 分享战绩</button>
+      </div>
+    </div>
+
+    <!-- 自定义表情弹窗 -->
+    <div id="modal-custom" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-body">
+        <h3>🎨 自定义表情</h3>
+        <p class="modal-desc">选择等级，上传图片替换表情</p>
+        <div class="level-selector" id="level-selector"></div>
+        <div class="preview-area">
+          <canvas id="preview-canvas" width="128" height="128"></canvas>
+        </div>
+        <label class="btn btn-secondary upload-label">
+          📁 选择图片
+          <input type="file" id="emoji-upload" accept="image/*">
+        </label>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-save-emoji">保存</button>
+          <button class="btn btn-ghost" id="btn-clear-emoji">恢复默认</button>
+          <button class="btn btn-ghost" id="btn-cancel-emoji">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 技能选择弹窗 -->
+    <div id="modal-burst" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-body modal-burst-body">
+        <h3>⚡ 选择技能</h3>
+        <div id="skill-choices"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
