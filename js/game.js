@@ -1022,31 +1022,71 @@
   }
 
   // ======================== SHARE ========================
-  function shareResult() {
-    const text = `🎮 表情乱碰 | 得分 ${S.score} | 最高 Lv.${S.maxLevel} | 合成 ${S.mergeCount}次\n我把自己合成封神了，你敢试吗？`;
+  function captureScreenshot() {
+    return new Promise((resolve) => {
+      try {
+        dom.canvas.toBlob((blob) => resolve(blob), 'image/png');
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+
+  function autoDownloadScreenshot(blob) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `表情乱碰_${S.score}分_${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+
+  async function shareResult() {
+    const url = location.href;
+    const shareText = `🎮 表情乱碰 | 得分 ${S.score} | 最高 Lv.${S.maxLevel} | 合成 ${S.mergeCount}次\n我把自己合成封神了，你敢试吗？\n${url}`;
+
+    const blob = await captureScreenshot();
+
+    // Web Share API —— 优先携带截图文件
     if (navigator.share) {
-      navigator.share({
-        title: '表情乱碰',
-        text,
-        url: location.href,
-      }).catch(() => {});
-    } else if (typeof wx !== 'undefined' && wx.ready) {
+      if (blob && navigator.canShare) {
+        const file = new File([blob], 'emoji-bump.png', { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({ title: '表情乱碰', text: shareText, url, files: [file] });
+            return;
+          } catch (e) { /* 用户取消或不支持，继续降级 */ }
+        }
+      }
+      try {
+        await navigator.share({ title: '表情乱碰', text: shareText, url });
+        if (blob) autoDownloadScreenshot(blob);
+        return;
+      } catch (e) { /* 继续降级 */ }
+    }
+
+    // 微信 JSSDK
+    if (typeof wx !== 'undefined' && wx.ready) {
       wx.ready(() => {
         wx.updateAppMessageShareData({
           title: '表情乱碰 - 我得了' + S.score + '分!',
           desc: '我把自己合成封神了，你敢试吗？',
-          link: location.href,
-          imgUrl: '',
+          link: url,
+          imgUrl: blob ? URL.createObjectURL(blob) : '',
         });
       });
-    } else {
-      try {
-        navigator.clipboard.writeText(text).then(() => {
-          alert('战绩已复制到剪贴板!');
-        });
-      } catch (e) {
-        alert(text);
-      }
+      if (blob) autoDownloadScreenshot(blob);
+      return;
+    }
+
+    // 兜底：截图自动保存 + 复制战绩链接到剪贴板
+    if (blob) autoDownloadScreenshot(blob);
+    try {
+      await navigator.clipboard.writeText(shareText);
+      alert('战绩和链接已复制到剪贴板！' + (blob ? '\n截图已自动保存。' : ''));
+    } catch (e) {
+      alert(shareText);
     }
   }
 
