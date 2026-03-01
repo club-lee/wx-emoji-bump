@@ -1032,14 +1032,38 @@
     });
   }
 
-  function autoDownloadScreenshot(blob) {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `表情乱碰_${S.score}分_${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+  function saveScreenshot(blob) {
+    if (isMobile) {
+      showScreenshotPreview(blob);
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `表情乱碰_${S.score}分_${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    }
+  }
+
+  function showScreenshotPreview(blob) {
+    const modal = $('modal-screenshot');
+    const img = $('screenshot-img');
+    const oldUrl = img.src;
+    if (oldUrl && oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
+    img.src = URL.createObjectURL(blob);
+    modal.classList.remove('hidden');
+
+    const closeBtn = $('btn-screenshot-close');
+    const backdrop = modal.querySelector('.modal-backdrop');
+    const close = () => {
+      modal.classList.add('hidden');
+      S.paused = false;
+    };
+    closeBtn.onclick = close;
+    backdrop.onclick = close;
   }
 
   async function shareResult() {
@@ -1061,7 +1085,7 @@
       }
       try {
         await navigator.share({ title: '表情乱碰', text: shareText, url });
-        if (blob) autoDownloadScreenshot(blob);
+        if (blob) saveScreenshot(blob);
         return;
       } catch (e) { /* 继续降级 */ }
     }
@@ -1076,16 +1100,17 @@
           imgUrl: blob ? URL.createObjectURL(blob) : '',
         });
       });
-      if (blob) autoDownloadScreenshot(blob);
+      if (blob) saveScreenshot(blob);
       return;
     }
 
-    // 兜底：截图自动保存 + 复制战绩链接到剪贴板
-    if (blob) autoDownloadScreenshot(blob);
+    // 兜底：截图保存 + 复制战绩链接到剪贴板
     try {
       await navigator.clipboard.writeText(shareText);
-      alert('战绩和链接已复制到剪贴板！' + (blob ? '\n截图已自动保存。' : ''));
-    } catch (e) {
+    } catch (e) { /* 忽略 */ }
+    if (blob) {
+      saveScreenshot(blob);
+    } else {
       alert(shareText);
     }
   }

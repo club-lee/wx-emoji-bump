@@ -615,6 +615,27 @@ html, body {
   color: var(--text-dim);
 }
 
+/* ==================== Screenshot Preview ==================== */
+.modal-screenshot-body {
+  max-width: 340px;
+  text-align: center;
+}
+
+.screenshot-preview {
+  margin: 12px auto;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  line-height: 0;
+}
+
+.screenshot-preview img {
+  width: 100%;
+  height: auto;
+  display: block;
+  -webkit-touch-callout: default !important;
+}
+
 /* ==================== Animations ==================== */
 @keyframes float {
   0%, 100% { transform: translateY(0); }
