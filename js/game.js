@@ -9,17 +9,21 @@
     WARN_THRESHOLD: 21,
     WARN_DURATION: 5000,
     CLICK_COOLDOWN: 300,
-    CLICK_IMPULSE_RANGE: 90,
+    CLICK_IMPULSE_RANGE: 110,
+    CLICK_FORCE: 0.018,
+    EMPTY_BLAST_RANGE: 140,
+    EMPTY_BLAST_FORCE: 0.11,
     CLICK_SCALE: 1.25,
     CLICK_SCALE_MS: 200,
+    FRENZY_DURATION: 4000,
+    FRENZY_CLICK_FACTOR: 0.55,
     CHAIN_WINDOW: 800,
     EMOTION_MAX: 150,
     EMOTION_MERGE: 3,
     EMOTION_CHAIN: 5,
-    SPAWN_INIT_DELAY: 2800,
-    SPAWN_MIN_DELAY: 1400,
-    SPAWN_SPEED_FACTOR: 40,
-    AUTO_LAUNCH_IDLE: 3000,
+    SPAWN_INIT_DELAY: 2200,
+    SPAWN_MIN_DELAY: 1100,
+    PANIC_SPAWN_BOOST: 0.72,
     MERGE_VEL_MIN: 0.8,
     GRAVITY: 0,
     BOUNCE_EMOJI: 0.9,
@@ -33,11 +37,12 @@
     PARTICLE_LIFE: 500,
     PARTICLE_COUNT: 10,
     SPEED_DURATION: 2000,
-    INITIAL_EMOJIS: 5,
+    INITIAL_EMOJIS: 3,
     LAUNCH_SPEED_BASE: 10,
     LAUNCH_SPEED_RAND: 3,
     LAUNCH_ANGLE_SPREAD: 1.2,
     LAUNCH_JITTER_X: 30,
+    TIP_INTERVAL: 260,
   };
 
   const LEVELS = [
@@ -53,9 +58,9 @@
   ];
 
   const SKILLS = [
-    { id: 'clear', icon: '🌪️', name: '清除风暴', desc: '清除5个最低等级表情' },
-    { id: 'auto',  icon: '🔗', name: '自动合成', desc: '自动匹配合成3对同级表情' },
-    { id: 'speed', icon: '⚡', name: '时间加速', desc: '全场加速2秒' },
+    { id: 'clear', icon: '🌪️', name: '救场清扫', desc: '清掉4个最低等级表情，立刻腾空间' },
+    { id: 'auto',  icon: '💥', name: '震场脉冲', desc: '朝拥挤区域打一发超强震波' },
+    { id: 'speed', icon: '⚡', name: '狂热出手', desc: '4秒内点得更快，发射也更快' },
   ];
 
   // ======================== STATE ========================
@@ -88,8 +93,14 @@
     shakeIntensity: 0,
     shakeEnd: 0,
     speedEnd: 0,
+    frenzyEnd: 0,
     comboTimer: null,
     ripples: [],
+    panicMode: false,
+    wasPanicMode: false,
+    actionTip: '',
+    tipLockUntil: 0,
+    lastTipUpdate: 0,
   };
 
   // ======================== DOM ========================
@@ -104,6 +115,8 @@
     emotionFill: $('emotion-fill'),
     emotionText: $('emotion-text'),
     emojiCount: $('emoji-count'),
+    actionTip: $('action-tip'),
+    panicBanner: $('panic-banner'),
     comboPopup: $('combo-popup'),
     levelPopup: $('level-popup'),
     warnOverlay: $('warning-overlay'),
@@ -260,9 +273,31 @@
   function doLaunch(angle) {
     launchEmoji(S.nextSpawnLevel, angle, false);
     S.spawnTimer = performance.now();
-    S.spawnDelay = Math.max(CFG.SPAWN_MIN_DELAY,
-      CFG.SPAWN_INIT_DELAY - Math.floor(S.score / 100) * CFG.SPAWN_SPEED_FACTOR);
+    S.spawnDelay = Math.max(
+      CFG.SPAWN_MIN_DELAY,
+      CFG.SPAWN_INIT_DELAY - Math.min(S.emojiData.size, 12) * 70
+    );
     S.nextSpawnLevel = getSpawnLevel();
+  }
+
+  function getCurrentSpawnDelay() {
+    let delay = S.panicMode
+      ? Math.max(CFG.SPAWN_MIN_DELAY * 0.75, S.spawnDelay * CFG.PANIC_SPAWN_BOOST)
+      : S.spawnDelay;
+    if (performance.now() < S.frenzyEnd) {
+      delay *= 0.72;
+    }
+    return Math.max(CFG.SPAWN_MIN_DELAY * 0.65, delay);
+  }
+
+  function isLaunchReady(now = performance.now()) {
+    return now - S.spawnTimer >= getCurrentSpawnDelay();
+  }
+
+  function getCurrentClickCooldown(now = performance.now()) {
+    return now < S.frenzyEnd
+      ? Math.round(CFG.CLICK_COOLDOWN * CFG.FRENZY_CLICK_FACTOR)
+      : CFG.CLICK_COOLDOWN;
   }
 
   function removeEmoji(bodyId) {
@@ -373,6 +408,19 @@
     }
   }
 
+  function showMoment(text, holdMs = 800) {
+    dom.comboPopup.textContent = text;
+    dom.comboPopup.classList.remove('hidden');
+    dom.comboPopup.classList.remove('show');
+    void dom.comboPopup.offsetWidth;
+    dom.comboPopup.classList.add('show');
+    clearTimeout(S.comboTimer);
+    S.comboTimer = setTimeout(() => {
+      dom.comboPopup.classList.add('hidden');
+      dom.comboPopup.classList.remove('show');
+    }, holdMs);
+  }
+
   // ======================== EMOTION BURST ========================
   function addEmotion(amt) {
     S.emotion = Math.min(CFG.EMOTION_MAX, S.emotion + amt);
@@ -416,60 +464,108 @@
 
     switch (skillId) {
       case 'clear': burstClear(); break;
-      case 'auto':  burstAutoMerge(); break;
-      case 'speed': burstSpeed(); break;
+      case 'auto':  burstPulse(); break;
+      case 'speed': burstFrenzy(); break;
     }
   }
 
   function burstClear() {
     const sorted = [...S.emojiData.entries()].sort((a, b) => a[1].level - b[1].level);
-    const toRemove = sorted.slice(0, 5);
+    const toRemove = sorted.slice(0, 4);
     for (const [id, data] of toRemove) {
       spawnParticles(data.body.position.x, data.body.position.y, '#ef4444', 6);
       removeEmoji(id);
     }
     triggerShake(8);
+    showMoment('腾出空间!', 900);
+    setActionTip('空出来了，立刻补一发或点一下续上节奏', 1200);
   }
 
-  function burstAutoMerge() {
-    const byLevel = {};
-    for (const [id, data] of S.emojiData) {
-      if (data.level >= 9) continue;
-      if (!byLevel[data.level]) byLevel[data.level] = [];
-      byLevel[data.level].push(id);
-    }
-    let merged = 0;
-    for (const lv in byLevel) {
-      const ids = byLevel[lv];
-      while (ids.length >= 2 && merged < 3) {
-        const id1 = ids.shift();
-        const id2 = ids.shift();
-        const d1 = S.emojiData.get(id1);
-        const d2 = S.emojiData.get(id2);
-        if (!d1 || !d2) continue;
-        const mx = (d1.body.position.x + d2.body.position.x) / 2;
-        const my = (d1.body.position.y + d2.body.position.y) / 2;
-        const newLv = d1.level + 1;
-        removeEmoji(id1);
-        removeEmoji(id2);
-        createEmoji(mx, my, newLv);
-        spawnParticles(mx, my, LEVELS[newLv - 1].color, 8);
-        addScore(newLv);
-        S.mergeCount++;
-        if (newLv > S.maxLevel) S.maxLevel = newLv;
-        merged++;
+  function getCrowdedZone() {
+    const entries = [...S.emojiData.values()];
+    if (entries.length === 0) return null;
+
+    let best = null;
+    for (let i = 0; i < entries.length; i++) {
+      const a = entries[i].body.position;
+      let neighbors = 0;
+      let sumX = a.x;
+      let sumY = a.y;
+      for (let j = 0; j < entries.length; j++) {
+        if (i === j) continue;
+        const b = entries[j].body.position;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 150) {
+          neighbors++;
+          sumX += b.x;
+          sumY += b.y;
+        }
       }
-      if (merged >= 3) break;
+      if (!best || neighbors > best.neighbors) {
+        best = {
+          x: sumX / (neighbors + 1),
+          y: sumY / (neighbors + 1),
+          neighbors
+        };
+      }
     }
+    return best;
   }
 
-  function burstSpeed() {
-    S.speedEnd = performance.now() + CFG.SPEED_DURATION;
+  function burstPulse() {
+    const zone = getCrowdedZone() || { x: W / 2, y: H / 2, neighbors: 0 };
+    const radius = 190;
+    const force = 0.16;
+
+    S.ripples.push({
+      x: zone.x,
+      y: zone.y,
+      r: 0,
+      maxR: radius,
+      life: 520,
+      maxLife: 520,
+      color: '#ff8906'
+    });
+
+    for (const [, data] of S.emojiData) {
+      const b = data.body;
+      const dx = b.position.x - zone.x;
+      const dy = b.position.y - zone.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0 && dist < radius) {
+        const strength = force * (1 - dist / radius);
+        Body.applyForce(b, b.position, {
+          x: (dx / dist) * strength,
+          y: (dy / dist) * strength,
+        });
+      }
+    }
+
+    triggerShake(10);
+    showMoment('全场散开!', 900);
+    setActionTip('震场后最适合补一发，趁乱做连撞', 1300);
+  }
+
+  function burstFrenzy() {
+    S.frenzyEnd = performance.now() + CFG.FRENZY_DURATION;
+    showMoment('狂热出手!', 900);
+    setActionTip('现在点得更快、发射也更快，狠狠干一波', 1400);
   }
 
   // ======================== CRASH SYSTEM ========================
   function checkCrash(now) {
     const count = S.emojiData.size;
+    S.wasPanicMode = S.panicMode;
+    S.panicMode = count > CFG.WARN_THRESHOLD;
+    dom.panicBanner.classList.toggle('hidden', !S.panicMode);
+
+    if (S.wasPanicMode && !S.panicMode) {
+      showMoment('救回来了!', 850);
+      setActionTip('稳住了，趁安全窗口继续做局', 1200);
+    }
+
     if (count > CFG.MAX_EMOJIS) {
       if (!S.warnActive) {
         S.warnActive = true;
@@ -487,10 +583,6 @@
         S.warnActive = false;
         dom.warnOverlay.classList.add('hidden');
       }
-    }
-
-    if (count > CFG.WARN_THRESHOLD) {
-      applyAttraction();
     }
   }
 
@@ -515,14 +607,6 @@
   }
 
   // ======================== SPAWNING ========================
-  function checkAutoLaunch(now) {
-    if (S.emojiData.size >= CFG.MAX_EMOJIS + 3) return;
-    if (now - S.spawnTimer > S.spawnDelay + CFG.AUTO_LAUNCH_IDLE) {
-      const angle = -Math.PI / 2 + (Math.random() - 0.5) * CFG.LAUNCH_ANGLE_SPREAD * 2;
-      doLaunch(angle);
-    }
-  }
-
   function getSpawnLevel() {
     const r = Math.random();
     if (S.score < 200) return 1;
@@ -532,14 +616,72 @@
   }
 
   // ======================== CLICK / TAP ========================
+  function setActionTip(text, holdMs = 0) {
+    if (!dom.actionTip) return;
+    S.actionTip = text;
+    dom.actionTip.textContent = text;
+    if (holdMs > 0) {
+      S.tipLockUntil = performance.now() + holdMs;
+    }
+  }
+
+  function findPromisingPair() {
+    let best = null;
+    const entries = [...S.emojiData.values()];
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        if (entries[i].level !== entries[j].level) continue;
+        const a = entries[i].body.position;
+        const b = entries[j].body.position;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (!best || dist < best.dist) {
+          best = { dist, level: entries[i].level };
+        }
+      }
+    }
+    return best;
+  }
+
+  function updateActionTip(now) {
+    if (!dom.actionTip) return;
+    if (now - S.lastTipUpdate < CFG.TIP_INTERVAL) return;
+    S.lastTipUpdate = now;
+    if (now < S.tipLockUntil) return;
+
+    const pair = findPromisingPair();
+    if (now < S.frenzyEnd) {
+      setActionTip('狂热中! 快点快拖，连续搅局最赚手感');
+      return;
+    }
+    if (S.panicMode) {
+      setActionTip('太挤了! 点空白震散，拖一发打穿缝隙');
+      return;
+    }
+    if (!isLaunchReady(now)) {
+      setActionTip('下一发还在蓄力，先点一下搅局');
+      return;
+    }
+    if (pair && pair.dist < 110) {
+      setActionTip(`Lv.${pair.level} 快贴上了，点一下试试`);
+      return;
+    }
+    if (S.emojiData.size < 6) {
+      setActionTip('先拖一发进场，把节奏搅热');
+      return;
+    }
+    setActionTip('拖拽发射，点表情弹飞，点空白震散');
+  }
+
   function handleClick(px, py) {
     if (S.gameOver || S.paused) return;
     const now = performance.now();
-    if (now - S.lastClickTime < CFG.CLICK_COOLDOWN) return;
+    if (now - S.lastClickTime < getCurrentClickCooldown(now)) return;
 
     let clicked = null;
     let clickedData = null;
-    for (const [id, data] of S.emojiData) {
+    for (const [, data] of S.emojiData) {
       const b = data.body;
       const dx = b.position.x - px;
       const dy = b.position.y - py;
@@ -550,33 +692,87 @@
         break;
       }
     }
-    if (!clicked) return;
     S.lastClickTime = now;
 
-    clickedData.clickTime = now;
-    clickedData.clickScale = CFG.CLICK_SCALE;
+    if (clicked) {
+      const boost = S.panicMode ? 1.35 : 1;
+      clickedData.clickTime = now;
+      clickedData.clickScale = CFG.CLICK_SCALE + (S.panicMode ? 0.08 : 0);
 
-    S.ripples.push({ x: clicked.position.x, y: clicked.position.y, r: 0, maxR: CFG.CLICK_IMPULSE_RANGE, life: 400, maxLife: 400, color: LEVELS[clickedData.level - 1].color });
+      S.ripples.push({
+        x: clicked.position.x,
+        y: clicked.position.y,
+        r: 0,
+        maxR: CFG.CLICK_IMPULSE_RANGE,
+        life: 400,
+        maxLife: 400,
+        color: LEVELS[clickedData.level - 1].color
+      });
 
-    const randAngle = Math.random() * Math.PI * 2;
-    Body.applyForce(clicked, clicked.position, {
-      x: Math.cos(randAngle) * 0.008,
-      y: Math.sin(randAngle) * 0.008,
+      let dirX = clicked.position.x - px;
+      let dirY = clicked.position.y - py;
+      const dirLen = Math.hypot(dirX, dirY) || 1;
+      dirX /= dirLen;
+      dirY /= dirLen;
+      Body.applyForce(clicked, clicked.position, {
+        x: dirX * CFG.CLICK_FORCE * boost,
+        y: dirY * CFG.CLICK_FORCE * boost,
+      });
+
+      for (const [, data] of S.emojiData) {
+        const b = data.body;
+        if (b === clicked) continue;
+        const dx = b.position.x - clicked.position.x;
+        const dy = b.position.y - clicked.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0 && dist < CFG.CLICK_IMPULSE_RANGE) {
+          const strength = 0.05 * boost * (1 - dist / CFG.CLICK_IMPULSE_RANGE);
+          Body.applyForce(b, b.position, {
+            x: (dx / dist) * strength,
+            y: (dy / dist) * strength,
+          });
+        }
+      }
+      setActionTip(S.panicMode ? '好，继续点! 先把这一团震开' : '点得漂亮，再补一发更容易连起来', 900);
+      return;
+    }
+
+    let affected = 0;
+    const blastRange = S.panicMode ? CFG.EMPTY_BLAST_RANGE * 1.15 : CFG.EMPTY_BLAST_RANGE;
+    const blastForce = S.panicMode ? CFG.EMPTY_BLAST_FORCE * 1.25 : CFG.EMPTY_BLAST_FORCE;
+    S.ripples.push({
+      x: px,
+      y: py,
+      r: 0,
+      maxR: blastRange,
+      life: 450,
+      maxLife: 450,
+      color: S.panicMode ? '#ef4444' : '#63E6BE'
     });
 
-    for (const [id, data] of S.emojiData) {
+    for (const [, data] of S.emojiData) {
       const b = data.body;
-      if (b === clicked) continue;
-      const dx = b.position.x - clicked.position.x;
-      const dy = b.position.y - clicked.position.y;
+      const dx = b.position.x - px;
+      const dy = b.position.y - py;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 0 && dist < CFG.CLICK_IMPULSE_RANGE) {
-        const strength = 0.08 * (1 - dist / CFG.CLICK_IMPULSE_RANGE);
+      if (dist > 0 && dist < blastRange) {
+        const strength = blastForce * (1 - dist / blastRange);
         Body.applyForce(b, b.position, {
           x: (dx / dist) * strength,
           y: (dy / dist) * strength,
         });
+        affected++;
       }
+    }
+
+    if (affected > 0) {
+      triggerShake(S.panicMode ? 8 : 5);
+      setActionTip(
+        S.panicMode ? '震开了! 趁现在快补一发' : '空白震场能拆团，也能补碰撞',
+        900
+      );
+    } else {
+      setActionTip('点表情会定向弹飞，点空白会震散附近', 1200);
     }
   }
 
@@ -649,6 +845,27 @@
     ctx.fillStyle = bgGrd;
     ctx.fillRect(0, 0, W, H);
 
+    const crowd = getCrowdedZone();
+    if (crowd && crowd.neighbors >= 3) {
+      const hotspot = ctx.createRadialGradient(crowd.x, crowd.y, 10, crowd.x, crowd.y, 130);
+      hotspot.addColorStop(0, S.panicMode ? 'rgba(239, 68, 68, 0.18)' : 'rgba(255, 137, 6, 0.12)');
+      hotspot.addColorStop(1, 'rgba(15, 14, 23, 0)');
+      ctx.fillStyle = hotspot;
+      ctx.fillRect(crowd.x - 140, crowd.y - 140, 280, 280);
+
+      ctx.beginPath();
+      ctx.arc(crowd.x, crowd.y, 54 + Math.min(34, crowd.neighbors * 4), 0, Math.PI * 2);
+      ctx.strokeStyle = S.panicMode ? 'rgba(239, 68, 68, 0.32)' : 'rgba(255, 137, 6, 0.18)';
+      ctx.lineWidth = S.panicMode ? 3 : 2;
+      ctx.stroke();
+    }
+
+    if (S.panicMode) {
+      const pulse = 0.08 + (Math.sin(performance.now() / 120) + 1) * 0.03;
+      ctx.fillStyle = `rgba(239, 68, 68, ${pulse.toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
     const p = CFG.WALL_PAD;
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
@@ -670,7 +887,8 @@
     const cy = H - CFG.WALL_PAD - r - 5;
 
     const timeSinceLastLaunch = now - S.spawnTimer;
-    const cooldownProgress = Math.min(1, timeSinceLastLaunch / S.spawnDelay);
+    const currentDelay = getCurrentSpawnDelay();
+    const cooldownProgress = Math.min(1, timeSinceLastLaunch / currentDelay);
     const isReady = cooldownProgress >= 1;
 
     // Draw trajectory line whenever aiming, regardless of cooldown
@@ -721,20 +939,14 @@
     }
     ctx.restore();
 
-    // Auto-launch countdown circle — only after ready
-    if (isReady && S.emojiData.size < CFG.MAX_EMOJIS + 3) {
-      const idleTime = timeSinceLastLaunch - S.spawnDelay;
-      const autoProgress = Math.min(1, Math.max(0, idleTime / CFG.AUTO_LAUNCH_IDLE));
-
-      if (autoProgress > 0) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, r + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * autoProgress);
-        ctx.strokeStyle = autoProgress > 0.75 ? '#ef4444' : '#63E6BE';
-        ctx.lineWidth = 4;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-        ctx.lineCap = 'butt';
-      }
+    if (S.emojiData.size < CFG.MAX_EMOJIS + 3) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cooldownProgress);
+      ctx.strokeStyle = isReady ? (S.panicMode ? '#ef4444' : '#63E6BE') : 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = isReady ? 4 : 3;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.lineCap = 'butt';
     }
   }
 
@@ -832,6 +1044,12 @@
       countEl.style.color = '#ef4444';
     } else {
       countEl.style.color = '';
+    }
+
+    if (dom.actionTip) {
+      dom.actionTip.style.color = S.panicMode ? '#fff' : '';
+      dom.actionTip.style.borderColor = S.panicMode ? 'rgba(239,68,68,0.55)' : '';
+      dom.actionTip.style.background = S.panicMode ? 'rgba(72, 12, 12, 0.82)' : '';
     }
   }
 
@@ -1157,13 +1375,15 @@
     S.startTime = performance.now();
     S.spawnTimer = S.startTime;
 
+    const starterAngles = [-2.05, -1.57, -1.08];
     for (let i = 0; i < CFG.INITIAL_EMOJIS; i++) {
       setTimeout(() => {
-        if (!S.gameOver) launchEmoji(1);
+        if (!S.gameOver) launchEmoji(1, starterAngles[i] || -Math.PI / 2);
       }, i * 300);
     }
 
     S.gameOver = false;
+    setActionTip('拖拽发射，点表情弹飞，点空白震散');
     lastFrameTime = performance.now();
     gameLoop(lastFrameTime);
   }
@@ -1197,8 +1417,15 @@
     S.pendingMerges = [];
     S.shakeIntensity = 0;
     S.speedEnd = 0;
+    S.frenzyEnd = 0;
+    S.panicMode = false;
+    S.wasPanicMode = false;
+    S.actionTip = '';
+    S.tipLockUntil = 0;
+    S.lastTipUpdate = 0;
 
     dom.warnOverlay.classList.add('hidden');
+    dom.panicBanner.classList.add('hidden');
     dom.comboPopup.classList.add('hidden');
     dom.levelPopup.classList.add('hidden');
     dom.btnBurst.disabled = true;
@@ -1222,11 +1449,12 @@
     for (const [, data] of S.emojiData) {
       const b = data.body;
       const speed = Vector.magnitude(b.velocity);
-      if (speed < 0.8) {
+      const aliveFor = performance.now() - data.born;
+      if (aliveFor > 1200 && speed < 0.45) {
         const angle = Math.random() * Math.PI * 2;
         Body.applyForce(b, b.position, {
-          x: Math.cos(angle) * 0.0004,
-          y: Math.sin(angle) * 0.0004,
+          x: Math.cos(angle) * 0.00018,
+          y: Math.sin(angle) * 0.00018,
         });
       }
     }
@@ -1262,8 +1490,8 @@
 
     nudgeSlowEmojis();
     processMerges();
-    checkAutoLaunch(timestamp);
     checkCrash(timestamp);
+    updateActionTip(timestamp);
     updateParticles(dt);
     updateRipples(dt);
 
@@ -1354,24 +1582,14 @@
       const dy = y - S.input.startY;
       const isDrag = (dx * dx + dy * dy > 25);
 
-      let clickedEmoji = false;
       if (!isDrag) {
-        for (const [id, data] of S.emojiData) {
-          const b = data.body;
-          const edx = b.position.x - S.input.startX;
-          const edy = b.position.y - S.input.startY;
-          const r = LEVELS[data.level - 1].r;
-          if (edx * edx + edy * edy < r * r * 1.2) {
-            clickedEmoji = true;
-            break;
-          }
-        }
-      }
-
-      if (!isDrag && clickedEmoji) {
         handleClick(x, y);
       } else {
         if (S.emojiData.size >= CFG.MAX_EMOJIS + 3) return;
+        if (!isLaunchReady()) {
+          setActionTip('下一发还在蓄力，先点一下搅局', 700);
+          return;
+        }
         
         const cx = W / 2;
         const cy = H - CFG.WALL_PAD - LEVELS[S.nextSpawnLevel - 1].r - 5;
@@ -1383,6 +1601,7 @@
         if (angle >= Math.PI / 2 || angle < -Math.PI + 0.1) angle = -Math.PI + 0.1;
 
         doLaunch(angle);
+        setActionTip(S.panicMode ? '快，继续补点一下把路打通' : '出手了，点一下把局面搅起来', 900);
       }
     }
 
