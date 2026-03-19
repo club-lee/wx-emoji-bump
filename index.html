@@ -49,7 +49,10 @@
 
       <canvas id="game-canvas"></canvas>
 
-      <div id="action-tip">拖拽发射，点表情弹飞，点空白震散</div>
+      <div id="action-tip">
+        <span id="action-tip-text">拖动底部表情发射，同级相撞会合成更高等级</span>
+        <button id="btn-close-tip" type="button" aria-label="关闭提示">×</button>
+      </div>
       <div id="panic-banner" class="hidden">狂暴救场中: 点击更猛，发射更快</div>
 
       <div id="combo-popup" class="hidden"></div>
@@ -76,6 +79,21 @@
           <span class="btn-icon">📤</span>
           <span class="btn-text">分享</span>
         </button>
+      </div>
+
+      <div id="skill-peek" class="hidden">
+        <button id="btn-skill-peek" type="button">爆发已就绪，点这里选技能</button>
+      </div>
+
+      <div id="skill-tray" class="hidden">
+        <div class="skill-tray-head">
+          <div class="skill-tray-copy">
+            <span class="skill-tray-title">爆发技能</span>
+            <span class="skill-tray-subtitle">随机 3 选 1，可先收起稍后再用</span>
+          </div>
+          <button id="btn-skill-tray-close" type="button">稍后再选</button>
+        </div>
+        <div id="skill-choices"></div>
       </div>
     </div>
 
@@ -143,14 +161,6 @@
       </div>
     </div>
 
-    <!-- 技能选择弹窗 -->
-    <div id="modal-burst" class="modal hidden">
-      <div class="modal-backdrop"></div>
-      <div class="modal-body modal-burst-body">
-        <h3>⚡ 选择技能</h3>
-        <div id="skill-choices"></div>
-      </div>
-    </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>

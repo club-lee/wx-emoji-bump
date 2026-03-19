@@ -246,17 +246,20 @@ html, body {
 
 #action-tip {
   position: absolute;
-  left: 50%;
-  bottom: calc(84px + var(--safe-bottom));
-  transform: translateX(-50%);
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: rgba(15, 14, 23, 0.78);
+  left: 12px;
+  right: 12px;
+  top: calc(64px + var(--safe-top));
+  padding: 8px 10px 8px 12px;
+  border-radius: 12px;
+  background: rgba(15, 14, 23, 0.86);
   border: 1px solid rgba(255,255,255,0.08);
   color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.3;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   pointer-events: none;
   z-index: 12;
   backdrop-filter: blur(8px);
@@ -264,9 +267,25 @@ html, body {
   transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
+#action-tip-text {
+  flex: 1;
+}
+
+#btn-close-tip {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  padding: 0;
+  min-width: 16px;
+}
+
 #panic-banner {
   position: absolute;
-  top: 68px;
+  top: calc(104px + var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   padding: 9px 16px;
@@ -321,7 +340,7 @@ html, body {
 /* ==================== Warning ==================== */
 #warning-overlay {
   position: absolute;
-  top: 60px;
+  top: calc(100px + var(--safe-top));
   left: 0;
   right: 0;
   z-index: 25;
@@ -598,32 +617,90 @@ html, body {
   font-weight: 700;
 }
 
-/* ==================== Burst Modal ==================== */
-.modal-burst-body {
-  max-width: 360px;
+/* ==================== Skill Tray ==================== */
+#skill-tray {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(82px + var(--safe-bottom));
+  padding: 12px;
+  border-radius: 18px;
+  background: rgba(26, 25, 50, 0.94);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 18;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+#skill-tray.skill-tray-closing {
+  transform: translateY(28px) scale(0.96);
+  opacity: 0;
+}
+
+.skill-tray-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.skill-tray-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skill-tray-title {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.skill-tray-subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+#btn-skill-tray-close,
+#btn-skill-peek {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#btn-skill-tray-close {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  color: var(--text-dim);
+  font-size: 11px;
 }
 
 #skill-choices {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .skill-btn {
   border: none;
   outline: none;
   cursor: pointer;
-  background: rgba(255,255,255,0.06);
+  background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
   border: 1px solid rgba(255,255,255,0.1);
   color: var(--text);
-  border-radius: 14px;
-  padding: 14px 18px;
+  border-radius: 16px;
+  padding: 12px 10px;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 132px;
   font-family: inherit;
-  transition: all 0.2s;
+  transition: transform 0.2s, background 0.2s, border-color 0.2s;
   text-align: left;
 }
 
@@ -633,24 +710,49 @@ html, body {
 }
 
 .skill-emoji {
-  font-size: 28px;
-  flex-shrink: 0;
+  font-size: 24px;
+  line-height: 1;
 }
 
 .skill-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .skill-name {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .skill-desc {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
+  line-height: 1.35;
+}
+
+#skill-peek {
+  position: absolute;
+  left: 50%;
+  bottom: calc(82px + var(--safe-bottom));
+  transform: translateX(-50%);
+  z-index: 17;
+}
+
+#btn-skill-peek {
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255,137,6,0.94), rgba(229,49,112,0.92));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(255, 137, 6, 0.28);
+  animation: peekBounce 1.3s ease-in-out infinite;
+}
+
+#skill-peek.skill-peek-pop #btn-skill-peek {
+  animation: peekPop 0.36s ease-out;
 }
 
 /* ==================== Screenshot Preview ==================== */
@@ -701,15 +803,46 @@ html, body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes peekBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes peekPop {
+  0% { transform: translateY(16px) scale(0.9); opacity: 0; }
+  70% { transform: translateY(-2px) scale(1.03); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
 .screen.active {
   animation: fadeIn 0.3s ease-out;
 }
 
 @media (max-width: 420px) {
   #action-tip {
-    max-width: calc(100vw - 24px);
-    text-align: center;
-    white-space: normal;
-    line-height: 1.35;
+    top: calc(60px + var(--safe-top));
+  }
+
+  #skill-tray {
+    left: 8px;
+    right: 8px;
+    padding: 10px;
+  }
+
+  #skill-choices {
+    gap: 6px;
+  }
+
+  .skill-btn {
+    min-height: 124px;
+    padding: 10px 8px;
+  }
+
+  .skill-name {
+    font-size: 12px;
+  }
+
+  .skill-desc {
+    font-size: 10px;
   }
 }

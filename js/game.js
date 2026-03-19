@@ -25,6 +25,7 @@
     SPAWN_MIN_DELAY: 1100,
     PANIC_SPAWN_BOOST: 0.72,
     MERGE_VEL_MIN: 0.8,
+    MERGE_VEL_LV9: 0.76,
     GRAVITY: 0,
     BOUNCE_EMOJI: 0.9,
     BOUNCE_WALL: 1.0,
@@ -42,6 +43,11 @@
     LAUNCH_SPEED_RAND: 3,
     LAUNCH_ANGLE_SPREAD: 1.2,
     LAUNCH_JITTER_X: 30,
+    LAUNCH_RELEASE_MIN: 220,
+    LAUNCH_MIN_CHARGE: 0.72,
+    MAGNET_DURATION: 5000,
+    MAGNET_ATTRACT_BOOST: 2.2,
+    MAGNET_RANGE_BOOST: 1.35,
     TIP_INTERVAL: 260,
   };
 
@@ -55,12 +61,16 @@
     { lv: 7, emoji: '🤩', r: 54, color: '#A9E34B', glow: '#A9E34B66' },
     { lv: 8, emoji: '👻', r: 62, color: '#E599F7', glow: '#E599F766' },
     { lv: 9, emoji: '👑', r: 70, color: '#FFD43B', glow: '#FFD43B66' },
+    { lv: 10, emoji: '🌈', r: 80, color: '#7CFCFF', glow: '#7CFCFF66' },
   ];
 
   const SKILLS = [
-    { id: 'clear', icon: '🌪️', name: '救场清扫', desc: '清掉4个最低等级表情，立刻腾空间' },
-    { id: 'auto',  icon: '💥', name: '震场脉冲', desc: '朝拥挤区域打一发超强震波' },
-    { id: 'speed', icon: '⚡', name: '狂热出手', desc: '4秒内点得更快，发射也更快' },
+    { id: 'clear', icon: '🌪️', name: '救场清扫', desc: '清掉 4 个最低级，立刻腾位置' },
+    { id: 'pulse', icon: '💥', name: '震场脉冲', desc: '炸开最拥挤的一团，马上解堵' },
+    { id: 'frenzy', icon: '⚡', name: '狂热出手', desc: '4 秒连点连发更快，适合追连锁' },
+    { id: 'magnet', icon: '🧲', name: '同级磁吸', desc: '4 秒同级更容易贴合碰撞' },
+    { id: 'sling', icon: '🎯', name: '对撞弹弓', desc: '把最近同级一对直接推向彼此' },
+    { id: 'catalyst', icon: '🧪', name: '升级催化', desc: '最低的 3 个表情各升 1 级' },
   ];
 
   // ======================== STATE ========================
@@ -94,6 +104,7 @@
     shakeEnd: 0,
     speedEnd: 0,
     frenzyEnd: 0,
+    magnetEnd: 0,
     comboTimer: null,
     ripples: [],
     panicMode: false,
@@ -101,6 +112,10 @@
     actionTip: '',
     tipLockUntil: 0,
     lastTipUpdate: 0,
+    tipDismissed: false,
+    skillOffer: [],
+    skillTrayOpen: false,
+    skillAnimTimer: null,
   };
 
   // ======================== DOM ========================
@@ -116,18 +131,23 @@
     emotionText: $('emotion-text'),
     emojiCount: $('emoji-count'),
     actionTip: $('action-tip'),
+    actionTipText: $('action-tip-text'),
+    btnCloseTip: $('btn-close-tip'),
     panicBanner: $('panic-banner'),
     comboPopup: $('combo-popup'),
     levelPopup: $('level-popup'),
     warnOverlay: $('warning-overlay'),
     warnTimer: $('warning-timer'),
     btnBurst: $('btn-burst'),
+    skillTray: $('skill-tray'),
+    skillPeek: $('skill-peek'),
+    btnSkillPeek: $('btn-skill-peek'),
+    btnSkillTrayClose: $('btn-skill-tray-close'),
     finalScore: $('final-score'),
     finalLevel: $('final-level'),
     finalMerges: $('final-merges'),
     finalTime: $('final-time'),
     modalCustom: $('modal-custom'),
-    modalBurst: $('modal-burst'),
     previewCanvas: $('preview-canvas'),
     emojiUpload: $('emoji-upload'),
     skillChoices: $('skill-choices'),
@@ -192,7 +212,7 @@
   }
 
   function initTextures() {
-    for (let i = 1; i <= 9; i++) {
+    for (let i = 1; i <= LEVELS.length; i++) {
       emojiTextures[i] = buildTexture(i);
     }
     for (const [level, img] of S.customEmojis) {
@@ -257,22 +277,22 @@
     return Math.max(3, base + rand);
   }
 
-  function launchEmoji(level, angle, useJitter = true) {
+  function launchEmoji(level, angle, useJitter = true, charge = 1) {
     const cx = W / 2 + (useJitter ? (Math.random() - 0.5) * CFG.LAUNCH_JITTER_X * 2 : 0);
     const r = LEVELS[level - 1].r;
     const cy = H - CFG.WALL_PAD - r - 5;
     if (angle === undefined) {
       angle = -Math.PI / 2 + (Math.random() - 0.5) * CFG.LAUNCH_ANGLE_SPREAD * 2;
     }
-    const speed = getLaunchSpeed(level);
+    const speed = getLaunchSpeed(level) * charge;
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
     return createEmoji(cx, cy, level, vx, vy);
   }
 
-  function doLaunch(angle) {
-    launchEmoji(S.nextSpawnLevel, angle, false);
-    S.spawnTimer = performance.now();
+  function doLaunch(angle, now = performance.now()) {
+    launchEmoji(S.nextSpawnLevel, angle, false, getLaunchCharge(now));
+    S.spawnTimer = now;
     S.spawnDelay = Math.max(
       CFG.SPAWN_MIN_DELAY,
       CFG.SPAWN_INIT_DELAY - Math.min(S.emojiData.size, 12) * 70
@@ -294,6 +314,15 @@
     return now - S.spawnTimer >= getCurrentSpawnDelay();
   }
 
+  function canLaunchNow(now = performance.now()) {
+    return now - S.spawnTimer >= CFG.LAUNCH_RELEASE_MIN;
+  }
+
+  function getLaunchCharge(now = performance.now()) {
+    const charge = Math.min(1, (now - S.spawnTimer) / getCurrentSpawnDelay());
+    return Math.max(CFG.LAUNCH_MIN_CHARGE, charge);
+  }
+
   function getCurrentClickCooldown(now = performance.now()) {
     return now < S.frenzyEnd
       ? Math.round(CFG.CLICK_COOLDOWN * CFG.FRENZY_CLICK_FACTOR)
@@ -307,6 +336,12 @@
     S.emojiData.delete(bodyId);
   }
 
+  function getMergeVelocityThreshold(level) {
+    return level === LEVELS.length - 1
+      ? CFG.MERGE_VEL_LV9
+      : CFG.MERGE_VEL_MIN;
+  }
+
   // ======================== COLLISION → MERGE ========================
   function onCollision(event) {
     const pairs = event.pairs;
@@ -318,10 +353,10 @@
       const b = S.emojiData.get(bodyB.id);
       if (!a || !b) continue;
       if (a.level !== b.level) continue;
-      if (a.level >= 9) continue;
+      if (a.level >= LEVELS.length) continue;
 
       const relVel = Vector.magnitude(Vector.sub(bodyA.velocity, bodyB.velocity));
-      if (relVel < CFG.MERGE_VEL_MIN) continue;
+      if (relVel < getMergeVelocityThreshold(a.level)) continue;
 
       S.mergeLock.add(bodyA.id);
       S.mergeLock.add(bodyB.id);
@@ -422,26 +457,36 @@
   }
 
   // ======================== EMOTION BURST ========================
-  function addEmotion(amt) {
-    S.emotion = Math.min(CFG.EMOTION_MAX, S.emotion + amt);
-    dom.btnBurst.disabled = S.emotion < CFG.EMOTION_MAX;
+  function updateBurstButtonState() {
+    dom.btnBurst.disabled = S.emotion < CFG.EMOTION_MAX && S.skillOffer.length === 0;
   }
 
-  function showBurstModal() {
-    if (S.emotion < CFG.EMOTION_MAX) return;
-    S.paused = true;
-    dom.modalBurst.classList.remove('hidden');
-
-    const indices = [];
-    const pool = [0, 1, 2];
-    while (indices.length < 3 && pool.length > 0) {
-      const idx = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-      indices.push(idx);
+  function addEmotion(amt) {
+    const prev = S.emotion;
+    S.emotion = Math.min(CFG.EMOTION_MAX, S.emotion + amt);
+    if (prev < CFG.EMOTION_MAX && S.emotion >= CFG.EMOTION_MAX) {
+      prepareSkillOffer();
+      openSkillTray();
     }
+    updateBurstButtonState();
+  }
 
+  function prepareSkillOffer() {
+    if (S.skillOffer.length > 0) return;
+    const pool = [...SKILLS];
+    while (S.skillOffer.length < 3 && pool.length > 0) {
+      const idx = Math.floor(Math.random() * pool.length);
+      S.skillOffer.push(pool.splice(idx, 1)[0].id);
+    }
+    renderSkillChoices();
+  }
+
+  function renderSkillChoices() {
+    if (!dom.skillChoices) return;
     dom.skillChoices.innerHTML = '';
-    indices.forEach(i => {
-      const sk = SKILLS[i];
+    S.skillOffer.forEach((skillId) => {
+      const sk = SKILLS.find((item) => item.id === skillId);
+      if (!sk) return;
       const btn = document.createElement('button');
       btn.className = 'skill-btn';
       btn.innerHTML = `
@@ -455,17 +500,69 @@
     });
   }
 
+  function openSkillTray() {
+    if (S.skillOffer.length === 0) return;
+    if (S.skillAnimTimer) clearTimeout(S.skillAnimTimer);
+    S.skillTrayOpen = true;
+    dom.skillPeek.classList.add('hidden');
+    dom.skillPeek.classList.remove('skill-peek-pop');
+    dom.skillTray.classList.remove('skill-tray-closing');
+    dom.skillTray.classList.remove('hidden');
+  }
+
+  function collapseSkillTray() {
+    if (S.skillOffer.length === 0) return;
+    if (S.skillAnimTimer) clearTimeout(S.skillAnimTimer);
+    S.skillTrayOpen = false;
+    dom.skillTray.classList.add('skill-tray-closing');
+    S.skillAnimTimer = setTimeout(() => {
+      dom.skillTray.classList.add('hidden');
+      dom.skillTray.classList.remove('skill-tray-closing');
+      dom.skillPeek.classList.remove('hidden');
+      dom.skillPeek.classList.add('skill-peek-pop');
+      S.skillAnimTimer = setTimeout(() => {
+        dom.skillPeek.classList.remove('skill-peek-pop');
+        S.skillAnimTimer = null;
+      }, 360);
+    }, 180);
+  }
+
+  function clearSkillOffer() {
+    if (S.skillAnimTimer) clearTimeout(S.skillAnimTimer);
+    S.skillOffer = [];
+    S.skillTrayOpen = false;
+    dom.skillTray.classList.add('hidden');
+    dom.skillTray.classList.remove('skill-tray-closing');
+    dom.skillPeek.classList.add('hidden');
+    dom.skillPeek.classList.remove('skill-peek-pop');
+    if (dom.skillChoices) dom.skillChoices.innerHTML = '';
+    S.skillAnimTimer = null;
+  }
+
+  function toggleSkillTray() {
+    if (S.skillOffer.length === 0 && S.emotion < CFG.EMOTION_MAX) return;
+    if (S.skillOffer.length === 0) prepareSkillOffer();
+    if (S.skillTrayOpen) {
+      collapseSkillTray();
+    } else {
+      openSkillTray();
+    }
+    updateBurstButtonState();
+  }
+
   function executeBurst(skillId) {
-    dom.modalBurst.classList.add('hidden');
-    S.paused = false;
+    clearSkillOffer();
     S.emotion = 0;
     S.burstCount++;
-    dom.btnBurst.disabled = true;
+    updateBurstButtonState();
 
     switch (skillId) {
       case 'clear': burstClear(); break;
-      case 'auto':  burstPulse(); break;
-      case 'speed': burstFrenzy(); break;
+      case 'pulse': burstPulse(); break;
+      case 'frenzy': burstFrenzy(); break;
+      case 'magnet': burstMagnet(); break;
+      case 'sling': burstSling(); break;
+      case 'catalyst': burstCatalyst(); break;
     }
   }
 
@@ -478,7 +575,7 @@
     }
     triggerShake(8);
     showMoment('腾出空间!', 900);
-    setActionTip('空出来了，立刻补一发或点一下续上节奏', 1200);
+    setActionTip('空出来了，补一发续节奏', 1200);
   }
 
   function getCrowdedZone() {
@@ -545,13 +642,85 @@
 
     triggerShake(10);
     showMoment('全场散开!', 900);
-    setActionTip('震场后最适合补一发，趁乱做连撞', 1300);
+    setActionTip('震场后补一发，最容易连撞', 1300);
   }
 
   function burstFrenzy() {
     S.frenzyEnd = performance.now() + CFG.FRENZY_DURATION;
     showMoment('狂热出手!', 900);
-    setActionTip('现在点得更快、发射也更快，狠狠干一波', 1400);
+    setActionTip('4 秒连点连发更快，适合追连锁', 1400);
+  }
+
+  function burstMagnet() {
+    S.magnetEnd = performance.now() + CFG.MAGNET_DURATION;
+    showMoment('同级磁吸!', 900);
+    setActionTip('4 秒内同级更容易贴到一起', 1400);
+  }
+
+  function burstSling() {
+    const entries = [...S.emojiData.values()];
+    let best = null;
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        if (entries[i].level !== entries[j].level) continue;
+        const a = entries[i].body.position;
+        const b = entries[j].body.position;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (!best || dist < best.dist) {
+          best = { dist, a: entries[i].body, b: entries[j].body, level: entries[i].level };
+        }
+      }
+    }
+
+    if (!best) {
+      burstPulse();
+      return;
+    }
+
+    const dx = best.b.position.x - best.a.position.x;
+    const dy = best.b.position.y - best.a.position.y;
+    const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const force = 0.055 + best.level * 0.004;
+
+    Body.applyForce(best.a, best.a.position, { x: nx * force, y: ny * force });
+    Body.applyForce(best.b, best.b.position, { x: -nx * force, y: -ny * force });
+    spawnParticles(best.a.position.x, best.a.position.y, LEVELS[best.level - 1].color, 8);
+    spawnParticles(best.b.position.x, best.b.position.y, LEVELS[best.level - 1].color, 8);
+    triggerShake(8);
+    showMoment('对撞弹弓!', 900);
+    setActionTip(`Lv.${best.level} 已被推向彼此，准备吃合成`, 1300);
+  }
+
+  function burstCatalyst() {
+    const entries = [...S.emojiData.entries()]
+      .filter(([, data]) => data.level < LEVELS.length)
+      .sort((a, b) => a[1].level - b[1].level);
+    const picks = entries.slice(0, 3);
+
+    if (picks.length === 0) {
+      burstFrenzy();
+      return;
+    }
+
+    for (const [id, data] of picks) {
+      const { x, y } = data.body.position;
+      const newLv = data.level + 1;
+      removeEmoji(id);
+      createEmoji(x, y, newLv);
+      spawnParticles(x, y, LEVELS[newLv - 1].color, 8);
+      if (newLv > S.maxLevel) {
+        S.maxLevel = newLv;
+        showLevelUp(newLv);
+      }
+    }
+
+    triggerShake(7);
+    showMoment('升级催化!', 900);
+    setActionTip('低级表情被抬高了，场面会更紧凑', 1300);
   }
 
   // ======================== CRASH SYSTEM ========================
@@ -563,7 +732,7 @@
 
     if (S.wasPanicMode && !S.panicMode) {
       showMoment('救回来了!', 850);
-      setActionTip('稳住了，趁安全窗口继续做局', 1200);
+      setActionTip('稳住了，继续做局', 1200);
     }
 
     if (count > CFG.MAX_EMOJIS) {
@@ -588,6 +757,9 @@
 
   function applyAttraction() {
     const entries = [...S.emojiData.values()];
+    const magnetActive = performance.now() < S.magnetEnd;
+    const attractRange = magnetActive ? CFG.ATTRACT_RANGE * CFG.MAGNET_RANGE_BOOST : CFG.ATTRACT_RANGE;
+    const attractForce = magnetActive ? CFG.ATTRACT_FORCE * CFG.MAGNET_ATTRACT_BOOST : CFG.ATTRACT_FORCE;
     for (let i = 0; i < entries.length; i++) {
       for (let j = i + 1; j < entries.length; j++) {
         if (entries[i].level !== entries[j].level) continue;
@@ -596,8 +768,8 @@
         const dx = b.position.x - a.position.x;
         const dy = b.position.y - a.position.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > 0 && dist < CFG.ATTRACT_RANGE) {
-          const f = CFG.ATTRACT_FORCE;
+        if (dist > 0 && dist < attractRange) {
+          const f = attractForce;
           const nx = dx / dist, ny = dy / dist;
           Body.applyForce(a, a.position, { x: nx * f, y: ny * f });
           Body.applyForce(b, b.position, { x: -nx * f, y: -ny * f });
@@ -617,9 +789,9 @@
 
   // ======================== CLICK / TAP ========================
   function setActionTip(text, holdMs = 0) {
-    if (!dom.actionTip) return;
+    if (!dom.actionTip || S.tipDismissed) return;
     S.actionTip = text;
-    dom.actionTip.textContent = text;
+    dom.actionTipText.textContent = text;
     if (holdMs > 0) {
       S.tipLockUntil = performance.now() + holdMs;
     }
@@ -652,26 +824,34 @@
 
     const pair = findPromisingPair();
     if (now < S.frenzyEnd) {
-      setActionTip('狂热中! 快点快拖，连续搅局最赚手感');
+      setActionTip('狂热中: 多拖多点，最容易打出连锁');
+      return;
+    }
+    if (now < S.magnetEnd) {
+      setActionTip('磁吸中: 同级会更主动贴近，盯紧同色团');
       return;
     }
     if (S.panicMode) {
-      setActionTip('太挤了! 点空白震散，拖一发打穿缝隙');
+      setActionTip('快超上限了: 先点空白震散，再补一发解堵');
+      return;
+    }
+    if (!canLaunchNow(now)) {
+      setActionTip('发射太快了，等半拍再拖会更稳');
       return;
     }
     if (!isLaunchReady(now)) {
-      setActionTip('下一发还在蓄力，先点一下搅局');
+      setActionTip('橙圈没满也能抢发，满圈会更有力');
       return;
     }
     if (pair && pair.dist < 110) {
-      setActionTip(`Lv.${pair.level} 快贴上了，点一下试试`);
+      setActionTip(`有一对 Lv.${pair.level} 很近，补一下就可能合成`);
       return;
     }
     if (S.emojiData.size < 6) {
-      setActionTip('先拖一发进场，把节奏搅热');
+      setActionTip('先把球打进场，优先凑同级碰撞');
       return;
     }
-    setActionTip('拖拽发射，点表情弹飞，点空白震散');
+    setActionTip('拖动底部表情发射，同级相撞会合成更高等级');
   }
 
   function handleClick(px, py) {
@@ -772,7 +952,7 @@
         900
       );
     } else {
-      setActionTip('点表情会定向弹飞，点空白会震散附近', 1200);
+      setActionTip('点表情弹飞，点空白震散', 1200);
     }
   }
 
@@ -889,6 +1069,8 @@
     const timeSinceLastLaunch = now - S.spawnTimer;
     const currentDelay = getCurrentSpawnDelay();
     const cooldownProgress = Math.min(1, timeSinceLastLaunch / currentDelay);
+    const charge = getLaunchCharge(now);
+    const canLaunch = canLaunchNow(now);
     const isReady = cooldownProgress >= 1;
 
     // Draw trajectory line whenever aiming, regardless of cooldown
@@ -904,11 +1086,11 @@
       ctx.lineTo(cx + Math.cos(angle) * 150, cy + Math.sin(angle) * 150);
 
       const grad = ctx.createLinearGradient(cx, cy, cx + Math.cos(angle) * 150, cy + Math.sin(angle) * 150);
-      grad.addColorStop(0, `rgba(255, 255, 255, ${isReady ? 0.9 : 0.4})`);
+      grad.addColorStop(0, `rgba(255, 255, 255, ${isReady ? 0.9 : canLaunch ? 0.72 : 0.4})`);
       grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
       ctx.strokeStyle = grad;
-      ctx.lineWidth = isReady ? 4 : 2;
+      ctx.lineWidth = isReady ? 4 : canLaunch ? 3 : 2;
       ctx.lineCap = 'round';
       ctx.setLineDash([8, 12]);
       ctx.stroke();
@@ -925,7 +1107,7 @@
     ctx.save();
     ctx.translate(cx, cy);
     ctx.scale(scale, scale);
-    ctx.globalAlpha = 0.4 + 0.6 * popProgress;
+    ctx.globalAlpha = 0.35 + 0.65 * charge;
 
     const tex = customTextures[S.nextSpawnLevel] || emojiTextures[S.nextSpawnLevel];
     if (tex) {
@@ -942,8 +1124,12 @@
     if (S.emojiData.size < CFG.MAX_EMOJIS + 3) {
       ctx.beginPath();
       ctx.arc(cx, cy, r + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cooldownProgress);
-      ctx.strokeStyle = isReady ? (S.panicMode ? '#ef4444' : '#63E6BE') : 'rgba(255,255,255,0.22)';
-      ctx.lineWidth = isReady ? 4 : 3;
+      ctx.strokeStyle = isReady
+        ? (S.panicMode ? '#ef4444' : '#63E6BE')
+        : canLaunch
+          ? 'rgba(255,137,6,0.9)'
+          : 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = isReady ? 4 : canLaunch ? 3.5 : 3;
       ctx.lineCap = 'round';
       ctx.stroke();
       ctx.lineCap = 'butt';
@@ -1047,6 +1233,7 @@
     }
 
     if (dom.actionTip) {
+      dom.actionTip.classList.toggle('hidden', S.tipDismissed);
       dom.actionTip.style.color = S.panicMode ? '#fff' : '';
       dom.actionTip.style.borderColor = S.panicMode ? 'rgba(239,68,68,0.55)' : '';
       dom.actionTip.style.background = S.panicMode ? 'rgba(72, 12, 12, 0.82)' : '';
@@ -1093,7 +1280,7 @@
         localStorage.setItem('customEmoji_1', oldStored);
         localStorage.removeItem('customEmoji');
       }
-      for (let i = 1; i <= 9; i++) {
+      for (let i = 1; i <= LEVELS.length; i++) {
         const stored = localStorage.getItem('customEmoji_' + i);
         if (!stored) continue;
         S.customEmojisB64.set(i, stored);
@@ -1207,7 +1394,7 @@
   function renderLevelSelector() {
     const container = document.getElementById('level-selector');
     container.innerHTML = '';
-    for (let i = 1; i <= 9; i++) {
+    for (let i = 1; i <= LEVELS.length; i++) {
       const slot = document.createElement('div');
       slot.className = 'level-slot'
         + (i === S.selectedCustomLevel ? ' selected' : '')
@@ -1344,6 +1531,25 @@
     }
   }
 
+  function loadTipPreference() {
+    try {
+      S.tipDismissed = localStorage.getItem('tipsHidden') === '1';
+    } catch (e) {
+      S.tipDismissed = false;
+    }
+    if (dom.actionTip) {
+      dom.actionTip.classList.toggle('hidden', S.tipDismissed);
+    }
+  }
+
+  function dismissTips() {
+    S.tipDismissed = true;
+    if (dom.actionTip) dom.actionTip.classList.add('hidden');
+    try {
+      localStorage.setItem('tipsHidden', '1');
+    } catch (e) {}
+  }
+
   function showModal(name) {
     S.paused = true;
     if (name === 'custom') {
@@ -1355,12 +1561,10 @@
         drawDefaultPreview(S.selectedCustomLevel);
       }
     }
-    if (name === 'burst') showBurstModal();
   }
 
   function hideModal(name) {
     if (name === 'custom') dom.modalCustom.classList.add('hidden');
-    if (name === 'burst') dom.modalBurst.classList.add('hidden');
     S.paused = false;
   }
 
@@ -1383,7 +1587,7 @@
     }
 
     S.gameOver = false;
-    setActionTip('拖拽发射，点表情弹飞，点空白震散');
+    setActionTip('拖动底部表情发射，同级相撞会合成更高等级');
     lastFrameTime = performance.now();
     gameLoop(lastFrameTime);
   }
@@ -1418,17 +1622,21 @@
     S.shakeIntensity = 0;
     S.speedEnd = 0;
     S.frenzyEnd = 0;
+    S.magnetEnd = 0;
     S.panicMode = false;
     S.wasPanicMode = false;
     S.actionTip = '';
     S.tipLockUntil = 0;
     S.lastTipUpdate = 0;
+    S.skillOffer = [];
+    S.skillTrayOpen = false;
 
     dom.warnOverlay.classList.add('hidden');
     dom.panicBanner.classList.add('hidden');
     dom.comboPopup.classList.add('hidden');
     dom.levelPopup.classList.add('hidden');
-    dom.btnBurst.disabled = true;
+    clearSkillOffer();
+    updateBurstButtonState();
   }
 
   function endGame() {
@@ -1489,6 +1697,7 @@
     Engine.update(engine, engineDt);
 
     nudgeSlowEmojis();
+    applyAttraction();
     processMerges();
     checkCrash(timestamp);
     updateActionTip(timestamp);
@@ -1539,7 +1748,10 @@
     $('btn-custom-start').addEventListener('click', () => showModal('custom'));
     $('btn-custom-game').addEventListener('click', () => showModal('custom'));
 
-    $('btn-burst').addEventListener('click', () => showModal('burst'));
+    $('btn-burst').addEventListener('click', toggleSkillTray);
+    dom.btnSkillPeek.addEventListener('click', openSkillTray);
+    dom.btnSkillTrayClose.addEventListener('click', collapseSkillTray);
+    dom.btnCloseTip.addEventListener('click', dismissTips);
 
     $('btn-share').addEventListener('click', shareResult);
     $('btn-share-result').addEventListener('click', shareResult);
@@ -1549,7 +1761,6 @@
     $('btn-cancel-emoji').addEventListener('click', () => hideModal('custom'));
 
     dom.modalCustom.querySelector('.modal-backdrop').addEventListener('click', () => hideModal('custom'));
-    dom.modalBurst.querySelector('.modal-backdrop').addEventListener('click', () => hideModal('burst'));
 
     dom.emojiUpload.addEventListener('change', (e) => {
       if (e.target.files && e.target.files[0]) processUpload(e.target.files[0]);
@@ -1577,6 +1788,7 @@
       if (!S.input.isDown) return;
       S.input.isDown = false;
       S.input.isAiming = false;
+      const now = performance.now();
 
       const dx = x - S.input.startX;
       const dy = y - S.input.startY;
@@ -1586,22 +1798,28 @@
         handleClick(x, y);
       } else {
         if (S.emojiData.size >= CFG.MAX_EMOJIS + 3) return;
-        if (!isLaunchReady()) {
-          setActionTip('下一发还在蓄力，先点一下搅局', 700);
+        if (!canLaunchNow(now)) {
+          setActionTip('太快了，马上能再补', 500);
           return;
         }
-        
+
         const cx = W / 2;
         const cy = H - CFG.WALL_PAD - LEVELS[S.nextSpawnLevel - 1].r - 5;
         let aimDx = x - cx;
         let aimDy = y - cy;
         let angle = Math.atan2(aimDy, aimDx);
-        
+        const fullyCharged = isLaunchReady(now);
+
         if (angle > -0.1 && angle < Math.PI / 2) angle = -0.1;
         if (angle >= Math.PI / 2 || angle < -Math.PI + 0.1) angle = -Math.PI + 0.1;
 
-        doLaunch(angle);
-        setActionTip(S.panicMode ? '快，继续补点一下把路打通' : '出手了，点一下把局面搅起来', 900);
+        doLaunch(angle, now);
+        setActionTip(
+          fullyCharged
+            ? (S.panicMode ? '快，继续补点打通' : '出手了，点一下接节奏')
+            : '抢发成功，力度稍弱',
+          900
+        );
       }
     }
 
@@ -1657,8 +1875,10 @@
 
   // ======================== INIT ========================
   function init() {
+    loadTipPreference();
     loadCustomEmojis();
     bindEvents();
+    updateBurstButtonState();
   }
 
   if (document.readyState === 'loading') {
